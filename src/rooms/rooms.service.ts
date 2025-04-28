@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Room } from './schemas/room.schema';
@@ -12,6 +12,10 @@ export class RoomsService {
 
   async createRoom(createRoomDto: CreateRoomDto, createdId: string): Promise<Room> {
     const members = createRoomDto.members?.map(id => new Types.ObjectId(id)) || [];
+
+    if (createRoomDto.type == 'private' && members.length > 2) {
+      throw new BadRequestException('Room must have 2 members for private room');
+    }
 
     if (!members.includes(new Types.ObjectId(createdId))) {
       members.push(new Types.ObjectId(createdId));
@@ -30,8 +34,8 @@ export class RoomsService {
       throw new NotFoundException('Room not found');
     }
 
-    if (room.members.length == 2 && room.type == 'private') {
-      throw new NotFoundException('Room is full');
+    if (room.members.length >= 2 && room.type == 'private') {
+      throw new BadRequestException('Room is full');
     }
     if (!room.members.includes(new Types.ObjectId(userId))) {
       room.members.push(new Types.ObjectId(userId));

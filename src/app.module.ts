@@ -29,6 +29,6 @@ import { JwtModule } from '@nestjs/jwt';
     JwtModule.register({ secret: <string>process.env.JWT_SECRET }),
   ],
   controllers: [AppController],
-  providers: [AppService, ChatGateway],
+  providers: [AppService],
 })
 export class AppModule {}

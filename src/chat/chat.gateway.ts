@@ -10,6 +10,7 @@ import {
 } from '@nestjs/websockets';
 import { Server as WSServer, WebSocket } from 'ws';
 import { MessagesService } from '../messages/messages.service';
+import { RoomsService } from '../rooms/rooms.service';
 import { JwtService } from '@nestjs/jwt';
 import { IncomingMessage } from 'http';
 
@@ -23,6 +24,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   constructor(
     private readonly messagesService: MessagesService,
+    private readonly roomsService: RoomsService,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -31,7 +33,6 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     const url = new URL(req.url ?? '', 'http://localhost');
     const token = url.searchParams.get('token');
-    // console.log('Token =', token);
 
     try {
       const payload = this.jwtService.verify(token!, {
@@ -46,7 +47,25 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   handleDisconnect(client: WebSocket) {
-    // console.log('Client disconnected:', client.url);
+    this.rooms.forEach((members, roomId) => {
+      if (members.has(client)) {
+        members.delete(client);
+        const notification = {
+          event: 'notification',
+          data: {
+            roomId: roomId,
+            username: (client as any).user.username,
+            message: `${(client as any).user.username} left room`,
+          },
+        };
+
+        this.rooms.get(roomId)?.forEach(member => {
+          if (member.readyState === WebSocket.OPEN) {
+            member.send(JSON.stringify(notification));
+          }
+        });
+      }
+    });
   }
 
   afterInit(server: WSServer) {
@@ -63,6 +82,19 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     client.send(JSON.stringify({ event: 'joined_room', data: roomId }));
 
     const history = await this.messagesService.getMessages(roomId);
+
+    //gửi thông báo đến tất cả các user đang kết nối
+    this.rooms.get(roomId)?.forEach(member => {
+      if (member.readyState === WebSocket.OPEN) {
+        member.send(
+          JSON.stringify({
+            event: 'notification',
+            data: `${(client as any).user.username} joined room`,
+          }),
+        );
+      }
+    });
+
     client.send(JSON.stringify({ event: 'chat_history', data: history }));
 
     console.log(`${(client as any).user.username} joined room ${roomId}`);
@@ -93,5 +125,32 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         member.send(JSON.stringify({ event: 'new_message', data: fullMessage }));
       }
     });
+  }
+
+  @SubscribeMessage('add_member')
+  async handleAddMember(
+    @MessageBody() payload: { roomId: string; userId: string },
+    @ConnectedSocket() client: WebSocket,
+  ) {
+    try {
+      await this.roomsService.addMember(payload.roomId, payload.userId);
+      const notification = {
+        event: 'notification',
+        data: {
+          roomId: payload.roomId,
+          username: (client as any).user.username,
+          message: `${(client as any).user.username} added ${payload.userId} to room`,
+        },
+      };
+
+      this.rooms.get(payload.roomId)?.forEach(member => {
+        if (member.readyState === WebSocket.OPEN) {
+          member.send(JSON.stringify(notification));
+        }
+      });
+    } catch (err) {
+      console.error('Error adding member:', err.message);
+      client.send(JSON.stringify({ event: 'error', data: err.message }));
+    }
   }
 }
